@@ -79,8 +79,6 @@ impl Auditor {
 
 impl<'ast> Visit<'ast> for Auditor {
 
-    /* -------- STRUCT ANALYSIS (Anchor Accounts) -------- */
-
     fn visit_item_struct(&mut self, node: &'ast ItemStruct) {
         let mut is_account = false;
         let mut is_mut = false;
@@ -89,7 +87,8 @@ impl<'ast> Visit<'ast> for Auditor {
         for attr in &node.attrs {
             if is_account_attr(attr) {
                 is_account = true;
-                let tokens = attr.tokens.to_string();
+
+                let tokens = attr.meta.to_token_stream().to_string();
 
                 if tokens.contains("mut") {
                     is_mut = true;
@@ -116,11 +115,7 @@ impl<'ast> Visit<'ast> for Auditor {
         syn::visit::visit_item_struct(self, node);
     }
 
-    /* -------- FUNCTION ANALYSIS -------- */
-
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-
-        // Detect AccountInfo abuse
         for input in &node.sig.inputs {
             if let FnArg::Typed(pat) = input {
                 if let Type::Path(tp) = &*pat.ty {
@@ -145,8 +140,6 @@ impl<'ast> Visit<'ast> for Auditor {
 
         syn::visit::visit_item_fn(self, node);
     }
-
-    /* -------- ARITHMETIC FLOW -------- */
 
     fn visit_expr_binary(&mut self, node: &'ast ExprBinary) {
         match node.op {
@@ -193,8 +186,16 @@ fn is_account_attr(attr: &Attribute) -> bool {
 fn main() {
     println!("{}", "Mini Solana Security Auditor".bold());
 
-    let code = fs::read_to_string("sample.rs")
+    // 🔒 BULLETPROOF INPUT HANDLING (BOM + WINDOWS SAFE)
+    let bytes = fs::read("sample.rs")
         .expect("Failed to read sample.rs");
+
+    let mut code = String::from_utf8_lossy(&bytes).to_string();
+
+    // strip BOM if present
+    if code.starts_with('\u{feff}') {
+        code = code.trim_start_matches('\u{feff}').to_string();
+    }
 
     let ast: File = syn::parse_file(&code)
         .expect("Failed to parse Rust file");
@@ -204,7 +205,6 @@ fn main() {
 
     auditor.report();
 
-    // Optional: export JSON
     let json = serde_json::to_string_pretty(&auditor.ctx.findings)
         .expect("json");
     fs::write("audit_report.json", json)
