@@ -3,14 +3,9 @@ name = "chronoflow"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
-uuid = { version = "1.6", features = ["v4", "serde"] }
-thiserror = "1.0"
-anyhow = "1.0"
+[[bin]]
+name = "chronoflow"
+path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }
@@ -20,5 +15,3 @@ chrono = "0.4"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 thiserror = "1.0"
 anyhow = "1.0"
-wasmer = "4.2"
-dashmap = "5.5"

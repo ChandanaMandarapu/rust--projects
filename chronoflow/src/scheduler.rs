@@ -1,44 +1,44 @@
 use crate::{Task, TaskExecution, ExecutionStatus, Schedule, PluginManager, Result, ChronoError};
 use chrono::{DateTime, Utc, Duration};
-use dashmap::DashMap;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
-use std::sync::Arc;
 
 pub struct Scheduler {
-    tasks: Arc<DashMap<Uuid, Task>>,
-    executions: Arc<DashMap<Uuid, TaskExecution>>,
+    tasks: Arc<Mutex<HashMap<Uuid, Task>>>,
+    executions: Arc<Mutex<HashMap<Uuid, TaskExecution>>>,
     plugin_manager: Arc<PluginManager>,
 }
 
 impl Scheduler {
     pub fn new(plugin_manager: Arc<PluginManager>) -> Self {
         Self {
-            tasks: Arc::new(DashMap::new()),
-            executions: Arc::new(DashMap::new()),
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+            executions: Arc::new(Mutex::new(HashMap::new())),
             plugin_manager,
         }
     }
     
     pub fn add_task(&self, task: Task) -> Uuid {
         let id = task.id;
-        self.tasks.insert(id, task);
+        self.tasks.lock().unwrap().insert(id, task);
         id
     }
     
     pub fn remove_task(&self, id: &Uuid) -> Result<()> {
-        self.tasks.remove(id)
+        self.tasks.lock().unwrap().remove(id)
             .ok_or_else(|| ChronoError::TaskNotFound(id.to_string()))?;
         Ok(())
     }
     
     pub fn get_task(&self, id: &Uuid) -> Result<Task> {
-        self.tasks.get(id)
-            .map(|t| t.clone())
+        self.tasks.lock().unwrap().get(id)
+            .cloned()
             .ok_or_else(|| ChronoError::TaskNotFound(id.to_string()))
     }
     
     pub fn list_tasks(&self) -> Vec<Task> {
-        self.tasks.iter().map(|e| e.value().clone()).collect()
+        self.tasks.lock().unwrap().values().cloned().collect()
     }
     
     pub async fn start(&self) {
@@ -53,33 +53,23 @@ impl Scheduler {
                 interval.tick().await;
                 let now = Utc::now();
                 
-                for mut task_ref in tasks.iter_mut() {
-                    let task = task_ref.value_mut();
-                    
+                let task_list: Vec<Task> = tasks.lock().unwrap().values().cloned().collect();
+                
+                for mut task in task_list {
                     if !task.enabled {
                         continue;
                     }
                     
-                    if should_run(task, now) {
+                    if should_run(&task, now) {
                         println!("Running task: {}", task.name);
-                        start_execution(task, &executions, &plugin_manager).await;
+                        start_execution(&task, &executions, &plugin_manager).await;
                         task.last_run = Some(now);
                         task.next_run = calculate_next_run(&task.schedule, now);
+                        tasks.lock().unwrap().insert(task.id, task);
                     }
                 }
             }
         });
-    }
-    
-    pub fn get_execution(&self, id: &Uuid) -> Option<TaskExecution> {
-        self.executions.get(id).map(|e| e.clone())
-    }
-    
-    pub fn list_executions(&self, task_id: &Uuid) -> Vec<TaskExecution> {
-        self.executions.iter()
-            .filter(|e| e.value().task_id == *task_id)
-            .map(|e| e.value().clone())
-            .collect()
     }
 }
 
@@ -113,7 +103,7 @@ fn calculate_next_run(schedule: &Schedule, from: DateTime<Utc>) -> Option<DateTi
 
 async fn start_execution(
     task: &Task,
-    executions: &Arc<DashMap<Uuid, TaskExecution>>,
+    executions: &Arc<Mutex<HashMap<Uuid, TaskExecution>>>,
     plugin_manager: &Arc<PluginManager>,
 ) -> Uuid {
     let exec_id = Uuid::new_v4();
@@ -127,7 +117,7 @@ async fn start_execution(
         error: None,
     };
     
-    executions.insert(exec_id, execution.clone());
+    executions.lock().unwrap().insert(exec_id, execution.clone());
     
     let task_clone = task.clone();
     let executions_clone = Arc::clone(executions);
@@ -139,17 +129,19 @@ async fn start_execution(
             &task_clone.plugin.config,
         );
         
-        let mut exec = executions_clone.get_mut(&exec_id).unwrap();
-        exec.finished_at = Some(Utc::now());
-        
-        match result {
-            Ok(output) => {
-                exec.status = ExecutionStatus::Success;
-                exec.output = Some(output);
-            },
-            Err(e) => {
-                exec.status = ExecutionStatus::Failed;
-                exec.error = Some(e.to_string());
+        let mut execs = executions_clone.lock().unwrap();
+        if let Some(exec) = execs.get_mut(&exec_id) {
+            exec.finished_at = Some(Utc::now());
+            
+            match result {
+                Ok(output) => {
+                    exec.status = ExecutionStatus::Success;
+                    exec.output = Some(output);
+                },
+                Err(e) => {
+                    exec.status = ExecutionStatus::Failed;
+                    exec.error = Some(e.to_string());
+                }
             }
         }
     });

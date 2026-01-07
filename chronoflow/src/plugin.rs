@@ -1,22 +1,21 @@
 use crate::{ChronoError, Result};
 use serde_json::Value as JsonValue;
-use std::sync::Arc;
-use dashmap::DashMap;
+use std::collections::HashMap;
 
 pub struct PluginManager {
-    plugins: Arc<DashMap<String, Box<dyn Fn(&JsonValue) -> Result<String> + Send + Sync>>>,
+    plugins: HashMap<String, Box<dyn Fn(&JsonValue) -> Result<String> + Send + Sync>>,
 }
 
 impl PluginManager {
     pub fn new() -> Self {
-        let manager = Self {
-            plugins: Arc::new(DashMap::new()),
+        let mut manager = Self {
+            plugins: HashMap::new(),
         };
         manager.register_builtin_plugins();
         manager
     }
     
-    fn register_builtin_plugins(&self) {
+    fn register_builtin_plugins(&mut self) {
         // HTTP request plugin
         self.plugins.insert(
             "http_request".to_string(),
